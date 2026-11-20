@@ -8,7 +8,7 @@ omc.ModelFactory = class {
         const stream = context.stream;
         if (stream && stream.length >= 256) {
             const header = stream.peek(84);
-            if (header[0] === 0x49 && header[1] === 0x4d && header[2] === 0x4f && header[3] === 0x44 && header[82] === 4) {
+            if (header[0] === 0x49 && header[1] === 0x4d && header[2] === 0x4f && header[3] === 0x44 && [4, 10].includes(header[82])) {
                 return context.set('omc');
             }
         }
@@ -82,7 +82,14 @@ omc.ModelFactory = class {
             const nested = [];
             modules.push(new omc.Graph(graph, schema, metadata, region, nested), ...nested);
         }
-        return { format: 'HiAI OMC', name: proto.name, modules };
+        const modelMetadata = [{ name: 'container model type', value: String(header.getUint8(82)) }];
+        for (const [id, label] of [[0, 'model'], [1, 'weights'], [2, 'tasks']]) {
+            if (partitions.has(id)) {
+                const { offset, length } = partitions.get(id);
+                modelMetadata.push({ name: `${label} partition`, value: `${length} bytes at file offset ${offset}` });
+            }
+        }
+        return { format: 'HiAI OMC', name: proto.name, modules, metadata: modelMetadata };
     }
 };
 
@@ -153,7 +160,14 @@ omc.Graph = class {
             }
             const node = { name: op.name, type: metadata.type(op.type) || { name: op.type }, inputs: ins, outputs: outs,
                 controlDependencies: control, attributes: [] };
-            for (const [name, attr] of Object.entries(op.attr)) {
+            // GE map serialization can put branches1 before branches0. The Case list defines dispatch order.
+            const branches = (op.type === 'Case' ? op.attr.branches?.list?.s : null) || [];
+            const keys = new Set([...branches.map((key) => new TextDecoder().decode(key)), ...Object.keys(op.attr)]);
+            for (const name of keys) {
+                const attr = op.attr[name];
+                if (!attr) {
+                    continue;
+                }
                 if (op.type === 'GraphOp' && name === 'subgraph' && (attr.bt?.length || attr.g)) {
                     const sub = attr.g || schema.GraphDef.decode(protobuf.BinaryReader.open(attr.bt));
                     const offset = Number(op.attr.graphop_weight_offset?.i ?? 0);
@@ -164,6 +178,15 @@ omc.Graph = class {
                     node.type.type = 'function';
                     node.type.identifier = op.type;
                     nested.push(node.type);
+                } else if (attr.g) {
+                    const descendants = [];
+                    const branch = new omc.Graph(attr.g, schema, metadata, region, descendants);
+                    // Branches commonly reuse the same GE device subgraph name.
+                    for (const child of descendants) {
+                        child.name = `${branch.name}/${child.name}`;
+                    }
+                    node.attributes.push({ name, type: 'graph', value: branch });
+                    nested.push(branch, ...descendants);
                 } else {
                     const display = omc.attribute(attr);
                     if (display !== undefined) {

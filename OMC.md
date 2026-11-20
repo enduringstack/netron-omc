@@ -34,6 +34,25 @@ open -a "$HOME/Applications/Netron OMC.app" \
 
 两张截图都来自安装版 Netron 打开的同一份 OMC，SHA-256 为 `b96709426418d1fd3f70e6d42b743e2b6fdfdc303255ffec0396d7dcae327439`。下表保留此前逐头展开的整网和六层调试样本，便于对比。
 
+## 查看同一 OMC 中的 T1 和 T128 分支
+
+实测样本 `phase.omc` 是一个形状分派探针。它包含一个权重输入、一个状态输入和两份设备任务。它用于检查一个文件封装两个形状档的方式。打开时使用此仓库根目录作为工作目录。
+
+```sh
+phase=../../out/qwen35-2b-20261119/whole-network/single-omc/gears/phase.omc
+open -a "$HOME/Applications/Netron OMC.app" "$phase"
+node test/omc.mjs --phase-gears "$phase"
+```
+
+根图 `enum_shape_main_graph` 有四个输入。形状输入 `data_shape` 提供 12 个 int32，`MapIndex` 通过含 24 项的常量表选择档位，索引连到 `Case` 的第一个输入。余下三个输入依次是 `x`、`shared_weight`、`state`。Case 输出连接到模型输出。在 Case 节点的 `branches0` 或 `branches1` 行点击 **○** 打开分支，再点击 GraphOp 的 **ƒ** 打开该分支的设备图。两个设备图使用带分支名的路径，均可从左下角的图列表直接选择。[根图截图](docs/omc/phase-root.png)
+
+| Case 分支 | x 的输入形状 | 设备图中的 weighted 算子 | 任务分区内偏移 | 任务字节数 |
+|---|---|---|---:|---:|
+| branches0 | [1,1,1,16] | Eltwise | 0 | 41,000 |
+| branches1 | [1,1,128,16] | Mul | 41,000 | 51,010 |
+
+分支顺序直接来自 Case 的 `branches` 列表。两份 GraphOp 的 `graphop_task_offset` 和 `graphop_task_size` 覆盖完整的 92,010 字节任务分区。两个切片开头均有 little-endian `0xabcdabcd` 标记，其长度字段也分别为 41,000 与 51,010。两份 GraphOp 的权重描述都指向权重分区的 [0,512) 区间。每个分支设备图含 7 个计算节点，其中 4 个是 TransData。以上信息来自 OMC，未测量任务执行时间或模型切档时的状态复用。[T1 设备图](docs/omc/phase-t1.png) · [T128 设备图](docs/omc/phase-t128.png)
+
 ## 验证记录
 
 | 本地样本 | 文件字节数 | 设备子图计算节点 | 数据输入引用数¹ | 实际验证 |
@@ -50,7 +69,7 @@ open -a "$HOME/Applications/Netron OMC.app" \
 
 ## 编译产物中能看到哪些信息
 
-加载器检查 IMOD 容器、模型类型 4 和分区边界，解码图分区的 GE ModelDef，继续解码 GraphOp 属性中内嵌的 GE GraphDef。节点名称、端口索引、设备侧布局和数据类型来自模型描述。逻辑输入与设备子图内部张量可能有不同的形状或精度，请在对应图层查看。
+加载器检查 IMOD 容器、模型类型 4 或 10 及分区边界，解码图分区的 GE ModelDef，继续解码 GraphOp 属性中内嵌的 GE GraphDef。节点名称、端口索引、设备侧布局和数据类型来自模型描述。逻辑输入与设备子图内部张量可能有不同的形状或精度，请在对应图层查看。
 
 桌面端以文件流读取 OMC，预读窗口为 64 KiB。融合整网约 504 MB，解析器读取 9,137,339 字节的图及容器数据。权重由描述符给出的分区、偏移及长度按需读取。部分设备布局采用打包权重，张量面板反映编译描述符和存储内容。
 
