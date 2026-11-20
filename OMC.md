@@ -2,7 +2,22 @@
 
 本机已安装 `~/Applications/Netron OMC.app`，支持 Apple Silicon macOS。程序基于 Netron 9.3.6，上游提交为 `5cc0f9f3ffb180202ae1180e151772110baac7f8`。桌面查看器从本地文件读取模型，可离线使用。
 
-## 打开实测的整网 ViT
+## 24 层动态 W8A8 整网与融合 RoPE
+
+在 Netron 打开 `vision448.omc`，进入 `SubGraph_0`，搜索 `KirinVisionRopeFlash`。每个 block 的 QKV 投影直接输出 `1×1×784×3072` 的张量，RoPE、布局处理和 FlashAttention 在一个四核节点中完成，输出 `1×1×784×1024` 直接交给投影。截图取自本仓库的 Netron 打开的完整 OMC，文件 SHA-256 为 `e1a7e242e4700e86353ba458370127141ced18c6ebb8224f8c568b3a505df0ee`。
+
+![第一个视觉 block 的真实设备子图，包含 QKV 投影、融合 RoPE FlashAttention 和输出投影](docs/omc/vit-rope-flash.png)
+
+| 设备子图 | 动态 W8A8 原图 | 融合 RoPE 后 |
+|---|---:|---:|
+| 全部计算节点 | 1,921 | 409 |
+| TransData / Permute | 637 / 556 | 109 / 100 |
+| Reshape | 216 | 48 |
+| 独立 SplitD / StridedSliceV2 / Neg / ConcatD / Mul / Add | 24 / 96 / 48 / 48 / 96 / 48 | 0 / 0 / 0 / 0 / 0 / 0 |
+
+整网保留 49 个融合残差 LayerNorm、48 个动态投影、24 个融合 FFN。首层折叠图片卷积为二维 1×1；merger 有 1 个独立 Activation。
+
+## 早期整网 ViT 的 LayerNorm 和 FlashAttention
 
 已在 Kirin 9050 Pro 真机运行的融合版覆盖 patch、24 个视觉 block 和 merger。一次提交输入 784 个 patch，输出 196 个视觉 token，每个 2048 维。使用 **File → Open** 打开自己的 OMC，或在包含实验产物的本地工作区从 Netron 仓库运行以下命令。
 
