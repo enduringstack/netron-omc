@@ -149,9 +149,11 @@ desktop.Host = class {
                 this.set('session', this._telemetry.session);
             }
         };
-        await age();
-        await consent();
-        await telemetry();
+        if (this._environment.name !== 'Netron OMC') {
+            await age();
+            await consent();
+            await telemetry();
+        }
     }
 
     async start() {
@@ -363,6 +365,8 @@ desktop.Host = class {
                     reject(err);
                 } else if (!stat.isFile()) {
                     reject(new Error(`The path '${file}' is not a file.`));
+                } else if (!encoding && path.extname(pathname).toLowerCase() === '.omc') {
+                    resolve(new node.FileStream(pathname, 0, stat.size, stat.mtimeMs, 65536));
                 } else if (stat && stat.size < 0x40000000) {
                     fs.readFile(pathname, encoding, (err, data) => {
                         if (err) {

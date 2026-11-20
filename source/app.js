@@ -299,7 +299,7 @@ app.Application = class {
     }
 
     async _checkForUpdates() {
-        if (!electron.app.isPackaged) {
+        if (!electron.app.isPackaged || this._package.productName === 'Netron OMC') {
             return;
         }
         const autoUpdater = updater.default.autoUpdater;

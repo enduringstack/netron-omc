@@ -5,12 +5,13 @@ const node = {};
 
 node.FileStream = class {
 
-    constructor(file, start, length, mtime) {
+    constructor(file, start, length, mtime, cacheSize = 0x10000000) {
         this._file = file;
         this._start = start;
         this._length = length;
         this._position = 0;
         this._mtime = mtime;
+        this._cacheSize = cacheSize;
     }
 
     get position() {
@@ -22,7 +23,7 @@ node.FileStream = class {
     }
 
     stream(length) {
-        const stream = new node.FileStream(this._file, this._start + this._position, length, this._mtime);
+        const stream = new node.FileStream(this._file, this._start + this._position, length, this._mtime, this._cacheSize);
         this.skip(length);
         return stream;
     }
@@ -43,7 +44,7 @@ node.FileStream = class {
 
     peek(length) {
         length = length === undefined ? this._length - this._position : length;
-        if (length < 0x10000000) {
+        if (length < this._cacheSize) {
             const position = this._fill(length);
             this._position -= length;
             return this._buffer.subarray(position, position + length);
@@ -58,7 +59,7 @@ node.FileStream = class {
 
     read(length) {
         length = length === undefined ? this._length - this._position : length;
-        if (length < 0x10000000) {
+        if (length < this._cacheSize) {
             const position = this._fill(length);
             return this._buffer.slice(position, position + length);
         }
@@ -76,7 +77,7 @@ node.FileStream = class {
         }
         if (!this._buffer || this._position < this._offset || this._position + length > this._offset + this._buffer.length) {
             this._offset = this._position;
-            const length = Math.min(0x10000000, this._length - this._offset);
+            const length = Math.min(this._cacheSize, this._length - this._offset);
             if (!this._buffer || length !== this._buffer.length) {
                 this._buffer = new Uint8Array(length);
             }
